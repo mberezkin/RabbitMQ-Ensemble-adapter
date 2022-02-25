@@ -15,7 +15,7 @@ Method OnProcessInput(message As isc.rabbitmq.Message) As %Status
 	s mesResponse.CorrelationId = message.MessageId
 	s sc = mesResponse.%Save()
 	
-	set sc=..SendRequestAsync("ATB.RabbitMQ.Operation", mesResponse)*/
+	set sc=..SendRequestAsync("RabbitMQ.Operation", mesResponse)*/
 	return sc
 }
 
