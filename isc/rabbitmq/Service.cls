@@ -11,11 +11,11 @@ Method OnProcessInput(message As isc.rabbitmq.Message) As %Status
 	s sc = message.%Save()
 	
 	// Test send input message to !!! ANOTHER QUEUE !!! by operation
-	*/s mesResponse = message.%ConstructClone()
+	/*s mesResponse = message.%ConstructClone()
 	s mesResponse.CorrelationId = message.MessageId
 	s sc = mesResponse.%Save()
 	
-	set sc=..SendRequestAsync("ATB.RabbitMQ.Operation", mesResponse)/*
+	set sc=..SendRequestAsync("ATB.RabbitMQ.Operation", mesResponse)*/
 	return sc
 }
 
