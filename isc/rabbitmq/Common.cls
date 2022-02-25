@@ -1,3 +1,5 @@
+Include Ensemble
+
 Class isc.rabbitmq.Common Extends %RegisteredObject [ Abstract ]
 {
 
@@ -53,6 +55,9 @@ Parameter SETTINGS = "Host:Basic,Port:Basic,VirtualHost:Basic,Queue:Basic,Exchan
 /// Connect to running JGW 
 Method Connect() As %Status
 {
+    Quit:((..JGService="") && ((..JGHost="") || (..JGPort = ""))) $$$ERROR($$$GeneralError,"Specify JGService setting or JGHost and JGPort settings")
+	Quit:((..JGService'="") && '##class(Ens.Director).IsItemEnabled(..JGService)) $$$ERROR($$$GeneralError, $$$FormatText("Java Gateway Service: '%1' is down",..JGService))
+	    
     // connect to current namespace, use 2 second timeout
     Set sc = $$$OK
     Set timeout = 5
@@ -95,7 +100,13 @@ Method ConnectToRabbitMQ() As %Status
 			Set ..API = $$$NULLOREF
 		}
 		
-		Set ..API = ##class(isc.rabbitmq.API).%New(..JGW, ..Host, ..Port, user, pass, ..VirtualHost, ..Queue, $$$YES, ..Exchange)
+		if ..Exchange]"" { Set ..API = ##class(isc.rabbitmq.API).%New(..JGW, ..Host, ..Port, user, pass, ..VirtualHost, ..Queue, ..Exchange) }
+		else { Set ..API = ##class(isc.rabbitmq.API).%New(..JGW, ..Host, ..Port, user, pass, ..VirtualHost, ..Queue) }
+		
+		
+		s:'$IsObject(..API) sc = $$$ERROR($$$GeneralError,"API.ConnectToRabbitMQ")
+		s:($IsObject(..API)&&..API.isLastError()) sc = $$$ERROR($$$GeneralError, ..API.getLastErrorMessage())
+
 	} Catch ex {
 		Set sc = ..ExceptionToStatus(ex)
 	}
@@ -103,26 +114,27 @@ Method ConnectToRabbitMQ() As %Status
 	Quit sc
 }
 
-/// Reserve Close connection. 
-Method CloseConnection()
+// Check connect and reconnect, if connection lost 
+
+Method CheckConnectToRabbitMQ() As %Status
 {
-	#Include Ensemble
-	if $IsObject(..API) {
-		try {
-				do ..API.close()
-			} catch ex {
-				set sc = ..ExceptionToStatus(ex)
-				if $System.Status.GetErrorText(sc) [ "AlreadyClosedException" {
-					$$$TRACE("Caught AlreadyClosedException")
-					set sc = $$$OK
-				} else {
-					$$$LOGINFO($$$FormatText("CloseConnection unexpected exception: %1", $System.Status.GetErrorText(sc)))
-					set ..API = $$$NULLOREF
-					throw ex
-				}
-			}
-		set ..API = $$$NULLOREF
+	Set sc = $$$OK
+	
+	Try {
+		If ('$IsObject(..API)) || ($IsObject(..API) && ('..API.isOpen())) {
+			Do:$IsObject(..API) ..API.close()
+			Set ..API = $$$NULLOREF
+			
+			$$$LOGWARNING($$$FormatText("Reconnect to RabbitMQ: %1:%2, VirtualHost: %3, Queue: %4, Exchange: %5", ..Host, ..Port, ..VirtualHost, ..Queue, ..Exchange))
+			Set sc = ..ConnectToRabbitMQ()
+			
+			if $$$ISOK(sc) $$$LOGINFO("Connection restored")
+		}
+	} Catch ex {
+		Set sc = ..ExceptionToStatus(ex)
 	}
+	
+	return sc
 }
 
 Method ExceptionToStatus(ex As %Exception.General) As %Status
@@ -136,5 +148,136 @@ Method ExceptionToStatus(ex As %Exception.General) As %Status
     Quit sc
 }
 
+/// Convert isc.rabbitmq.APIMessage (java) into isc.rabbitmq.Message (Ensemble)
+/// set sc = ##class(isc.rabbitmq.Common).APIMessageToMessage(apiMessage, .message) 
+ClassMethod APIMessageToMessage(apiMessage As isc.rabbitmq.APIMessage, ByRef message As isc.rabbitmq.Message, encoding As %String = "", bodyClass As %String = "") As %Status
+{
+	s sc = $$$OK
+	
+	q:'$IsObject(message) $$$ERROR($$$GeneralError,"Not is object [isc.rabbitmq.Message]")
+		
+	// BasicProperties
+	Set message.ContentType = apiMessage.getContentType()
+	Set message.ContentEncoding = apiMessage.getContentEncoding()
+	Set message.CorrelationId = apiMessage.getCorrelationId()
+	Set message.ReplyTo = apiMessage.getReplyTo()
+	Set message.Expiration = apiMessage.getExpiration()
+	Set message.MessageId = apiMessage.getMessageId()
+	Set message.Type = apiMessage.getType()
+	Set message.UserId = apiMessage.getUserId()
+	Set message.AppId = apiMessage.getAppId()
+	Set message.ClusterId = apiMessage.getClusterId()
+	Set message.DeliveryMode = apiMessage.getDeliveryMode()
+	Set message.Priority = apiMessage.getPriority()
+	Set message.Timestamp = apiMessage.getTimestamp()
+	
+	// Headers
+	s mapHeaders = apiMessage.getHeadersAsMap()
+	//$$$TRACE(mapHeaders)
+	#dim mapHeaders as java.util.Map
+	
+	#dim it as java.util.Iterator = mapHeaders.keySet().iterator()
+ 	While (it.hasNext()) {
+      Set key = it.next()
+      Set value = mapHeaders.get(key)
+      //$$$TRACE("key: "_key_", value: "_value)
+	  
+	  do message.Headers.SetAt(value, key)
+   }
+	
+	// Body
+	If bodyClass = "" {
+		Set message.BodyString = ..DecodeMessageBody(apiMessage.getBodyString(), encoding)
+	} 
+	Else {
+		#Dim tempStream As %Library.GlobalBinaryStream
+		Set tempStream = apiMessage.getBodyStream()
+					
+		Set message.BodyStream = $classmethod(bodyClass, "%New")
+		While 'tempStream.AtEnd {
+			Do message.BodyStream.Write(..DecodeMessageBody(tempStream.Read($$$MaxStringLength), encoding))
+		}
+		
+		Do message.BodyStream.Rewind()
+	}
+	    
+	Quit message
 }
 
+/// Convert isc.rabbitmq.Message (Ensemble) into isc.rabbitmq.APIMessage (java)
+/// set sc = ##class(isc.rabbitmq.Common).MessageToAPIMessage(message, .apiMessage) 
+ClassMethod MessageToAPIMessage(message As isc.rabbitmq.Message, ByRef apiMessage As isc.rabbitmq.APIMessage, encoding As %String = "UTF8") As %Status
+{
+	s sc = $$$OK
+	
+	q:'$IsObject(apiMessage) $$$ERROR($$$GeneralError,"Not is object [isc.rabbitmq.APIMessage]")
+		
+	// BasicProperties
+	d apiMessage.setContentType(message.ContentType)
+	d apiMessage.setContentEncoding(message.ContentEncoding)
+	d apiMessage.setCorrelationId(message.CorrelationId)
+	d apiMessage.setReplyTo(message.ReplyTo)
+	d apiMessage.setExpiration(message.Expiration)
+	d apiMessage.setMessageId(message.MessageId)
+	d apiMessage.setType(message.Type)
+	d apiMessage.setUserId(message.UserId)
+	d apiMessage.setAppId(message.AppId)
+	d apiMessage.setClusterId(message.ClusterId)
+	d apiMessage.setDeliveryMode(message.DeliveryMode)
+	d apiMessage.setPriority(message.Priority)
+	d apiMessage.setTimestamp(message.Timestamp)
+	
+	// Headers
+	#dim arHeaders as %ArrayOfDataTypes = message.Headers
+	if arHeaders '= "" { 
+		set key = ""
+		for {
+	  		set value = arHeaders.GetNext(.key)  quit:key=""
+	  		do apiMessage.setHeader(key, value)
+		}
+	}
+	
+	// Body
+	s bIsStream = $select($length(message.BodyString)>0:0,1:1)
+	Set stream = ##class(%Library.GlobalBinaryStream).%New()
+	
+	If (bIsStream && $IsObject(message.BodyStream)) {
+		If message.BodyStream.%IsA("%Library.GlobalBinaryStream")  {
+			Set stream = message.BodyStream
+		} 
+		Else {
+			While 'message.BodyStream.AtEnd {
+				Do stream.Write(..EncodeMessageBody(message.BodyStream.Read($$$MaxStringLength), encoding))
+			}
+		}
+	} 
+	Else {
+		Do stream.Write(..EncodeMessageBody(message.BodyString, encoding))
+	}
+    
+    Do stream.Rewind()
+    d apiMessage.setBodyStream(stream)
+    
+	Quit $$$OK
+}
+
+ClassMethod EncodeMessageBody(body As %String, encoding As %String = "") As %String
+{
+	If encoding '= "" {
+		If $isObject(body) {
+			// TODO streams
+		} Else {
+			Set body = $zcvt(body, "O", encoding)		
+		}
+	}
+	Quit body
+}
+
+/// Decode message body. May be full body or only a piece. 
+ClassMethod DecodeMessageBody(body As %String, encoding As %String) As %String
+{
+	Set:encoding'="" body = $zcvt(body, "I", encoding)
+	Quit body
+}
+
+}
