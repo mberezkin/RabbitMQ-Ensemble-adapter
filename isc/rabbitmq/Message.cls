@@ -21,11 +21,13 @@ Property AppId As %String;
 
 Property ClusterId As %String;
 
-Property DeliveryMode As %String;
+Property DeliveryMode As %Integer;
 
-Property Priority As %String;
+Property Priority As %Integer;
 
-Property Timestamp As %String;
+Property Timestamp As %TimeStamp;
+
+Property Headers As array Of %String;
 
 /// Could be either string or stream
 Property Body(MAXLEN = "") [ Transient ];
@@ -43,6 +45,11 @@ Property BodyStream As %Stream.GlobalCharacter;
 
 Storage Default
 {
+<Data name="Headers">
+<Attribute>Headers</Attribute>
+<Structure>subnode</Structure>
+<Subscript>"Headers"</Subscript>
+</Data>
 <Data name="MessageDefaultData">
 <Value name="1">
 <Value>%%CLASSNAME</Value>
@@ -87,12 +94,9 @@ Storage Default
 <Value>Timestamp</Value>
 </Value>
 <Value name="15">
-<Value>Body</Value>
-</Value>
-<Value name="16">
 <Value>BodyString</Value>
 </Value>
-<Value name="17">
+<Value name="16">
 <Value>BodyStream</Value>
 </Value>
 </Data>
@@ -105,4 +109,3 @@ Storage Default
 }
 
 }
-
