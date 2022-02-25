@@ -16,10 +16,10 @@ Ensemble adapter for RabbitMQ
 6. Compile one class isc.rabbitmq.Utils 
 
 7. In a target namespace create temp Gateway for update jar (replace parameters with FULL paths) executing in terminal:
-`Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).CreateGateway())`
+  `Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).CreateGateway())`
 
 7. Import (update) isc.rabbitmq.API and isc.rabbitmq.APIMessage executing in terminal:
-`Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).UpdateJar())`
+  `Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).UpdateJar())`
 
 8. Compile all package *isc.rabbitmq*
    
