@@ -16,11 +16,9 @@ ClassMethod BodyClassIsValid(val) As %Status
 /// Establish gateway connection and init java API.
 Method OnInit() As %Status
 {
-	Set sc = $$$OK
-	Quit:((..JGService="") && ((..JGHost="") || (..JGPort = ""))) $$$ERROR($$$GeneralError,"Specify JGService setting or JGHost and JGPort settings")
-	Quit:((..JGService'="") && '##class(Ens.Director).IsItemEnabled(..JGService)) $$$ERROR($$$GeneralError, $$$FormatText("Java Gateway Service: '%1' is down",..JGService))
 	Set sc = ..Connect()
 	Quit:$$$ISERR(sc) sc
+	
 	Set sc = ..ConnectToRabbitMQ()
 	Quit sc
 }
@@ -28,7 +26,10 @@ Method OnInit() As %Status
 /// Close connection.
 Method OnTearDown() As %Status
 {
-	Do ..API.close()
+	Try {
+		Do ..API.close()
+	} Catch ex {}
+		
 	Quit $$$OK
 }
 
@@ -37,83 +38,48 @@ Method OnTask() As %Status
 {
 	Set sc = $$$OK
 	
+	// Check connection
+	s sc = ..CheckConnectToRabbitMQ()
+	q:$$$ISERR(sc) sc
+	
 	Set messageCount = 1
 	
 	While messageCount > 0 {
-		// List containing metainformation and possibly body (in the case of string interaction) of the RabbitMQ message 
-		#Dim messageList As %ListOfDataTypes 
+	  	Try {	
+			#dim apiMessage as APIMessage = ..API.readMessage()
+			s:..API.isLastError() sc=$$$ERROR($$$GeneralError, ..API.getLastErrorMessage())
+			q:$$$ISERR(sc)
 		
-		If ..BodyClass = "" {
-			Try {
-				Set messageList = ..API.readMessageString()
-			} Catch ex {
-				Set sc = ..ExceptionToStatus(ex)
-			}
-		} Else {
-			#Dim tempStream As %Library.GlobalBinaryStream
-			Set messageList = ##class(%ListOfDataTypes).%New()
-			For i=1:1:15 Do messageList.Insert("")
-			Try {
-				Set tempStream = ..API.readMessageStream(.messageList)
-			} Catch ex {
-				Set sc = ..ExceptionToStatus(ex)
-			}
-		}
-		Quit:$$$ISERR(sc)
+			s:'$IsObject(apiMessage) sc = $$$ERROR($$$GeneralError,"Error get [isc.rabbitmq.APIMessage]")
+			q:$$$ISERR(sc)
+	
+	 	 	Set messageLength = apiMessage.getBodyLength()
+			Set messageCount = apiMessage.getMessageCount()
 		
-		Set messageLength = messageList.GetAt(1)
-		Set messageCount = messageList.GetAt(2)
-		
-		If messageLength>0 {
-			#Dim message As isc.rabbitmq.Message
-			Set message = ..ListToMessage(messageList)
-			If ..BodyClass = "" {
-				Set message.BodyString = ..DecodeMessageBody(messageList.GetAt(16))
+			If messageLength>0 {
+				Set message = ##class(isc.rabbitmq.Message).%New()
+				Set sc = ..APIMessageToMessage(apiMessage, .message, ..Encoding, ..BodyClass)
+				q:$$$ISERR(sc)
+				
+				$$$LOGINFO(apiMessage.toString())
+							
+				// Send to Service
+				Set sc = ..BusinessHost.ProcessInput(message)
 			} Else {
-				Set message.BodyStream = $classmethod(..BodyClass, "%New")
-				While 'tempStream.AtEnd {
-					Do message.BodyStream.Write(..DecodeMessageBody(tempStream.Read($$$MaxStringLength)))
-				}
-				Do message.BodyStream.Rewind()
-			}
-			Set sc = ..BusinessHost.ProcessInput(message)
-		} Else {
-			CONTINUE
-		}		
+				CONTINUE
+			}		
+			
+			Quit:$$$ISERR(sc)
+		
+		} Catch ex {
+		  	Set sc = ..ExceptionToStatus(ex)
+	    }
+	    
 		Quit:$$$ISERR(sc)
 	}
+	
 	Set ..BusinessHost.%WaitForNextCallInterval=1
 	Quit sc
 }
 
-/// Convert list containing metainformation into RabbitMQ message
-ClassMethod ListToMessage(list As %ListOfDataTypes) As isc.rabbitmq.Message
-{
-	Set message = ##class(isc.rabbitmq.Message).%New()
-	
-	Set message.ContentType = list.GetAt(3)
-	Set message.ContentEncoding = list.GetAt(4)
-	Set message.CorrelationId = list.GetAt(5)
-	Set message.ReplyTo = list.GetAt(6)
-	Set message.Expiration = list.GetAt(7)
-	Set message.MessageId = list.GetAt(8)
-	Set message.Type = list.GetAt(9)
-	Set message.UserId = list.GetAt(10)
-	Set message.AppId = list.GetAt(11)
-	Set message.ClusterId = list.GetAt(12)
-	Set message.DeliveryMode = list.GetAt(13)
-	Set message.Priority = list.GetAt(14)
-	Set message.Timestamp = list.GetAt(15)
-
-	Quit message
 }
-
-/// Decode message body. May be full body or only a piece. 
-Method DecodeMessageBody(body As %String) As %String
-{
-	Set:..Encoding'="" body = $zcvt(body, "O", ..Encoding)
-	Quit body
-}
-
-}
-
