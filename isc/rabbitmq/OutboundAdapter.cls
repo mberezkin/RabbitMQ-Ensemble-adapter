@@ -4,11 +4,9 @@ Class isc.rabbitmq.OutboundAdapter Extends (Ens.OutboundAdapter, isc.rabbitmq.Co
 /// Establish gateway connection and init java API.
 Method OnInit() As %Status
 {
-	Set sc = $$$OK
-	Quit:((..JGService="") && ((..JGHost="") || (..JGPort = ""))) $$$ERROR($$$GeneralError,"Specify JGService setting or JGHost and JGPort settings")
-	Quit:((..JGService'="") && '##class(Ens.Director).IsItemEnabled(..JGService)) $$$ERROR($$$GeneralError, $$$FormatText("Java Gateway Service: '%1' is down",..JGService))
 	Set sc = ..Connect()
 	Quit:$$$ISERR(sc) sc
+	
 	Set sc = ..ConnectToRabbitMQ()
 	Quit sc
 }
@@ -16,69 +14,40 @@ Method OnInit() As %Status
 /// Close connection
 Method OnTearDown() As %Status
 {
-	Do ..API.close()
+	Try {
+		Do ..API.close()
+	} Catch ex {}
+		
 	Quit $$$OK
 }
 
-/// Send message. message can be a string or stream.
-Method SendMessage(message As %Stream.Object) As %Status
+/// Send message
+Method SendMessage(message As isc.rabbitmq.Message) As %Status
 {
 	Set sc = $$$OK
-	Set stream = ##class(%Library.GlobalBinaryStream).%New()
 	
-	If $isObject(message) {
-		If message.%IsA("%Library.GlobalBinaryStream") {
-			Set stream = message
-		} Else {
-			While 'message.AtEnd {
-				Do stream.Write(..EncodeMessageBody(message.Read($$$MaxStringLength)))
-			}
-		}
-	} Else {
-		Do stream.Write(..EncodeMessageBody(message))
-	}
-	
+	q:'$IsObject(message) $$$ERROR($$$GeneralError,"Not object [isc.rabbitmq.Message]")
+				
 	Try {
-		Do ..API.sendMessage(stream)
-	} Catch ex {
+		// Check connection
+		s sc = ..CheckConnectToRabbitMQ()
+		q:$$$ISERR(sc)
+		
+		s apiMessage = ##class(isc.rabbitmq.APIMessage).%New(..JGW)
+		s sc = ..MessageToAPIMessage(message, .apiMessage, ..Encoding)
+		q:$$$ISERR(sc)
+		
+		$$$LOGINFO(apiMessage.toString())
+		
+		do ..API.sendMessage(apiMessage)
+		s:..API.isLastError() sc=$$$ERROR($$$GeneralError, ..API.getLastErrorMessage())
+		q:$$$ISERR(sc)
+	} 
+	Catch ex {
 		Set sc = ..ExceptionToStatus(ex)
 	}
+	
 	Quit sc
 }
 
-/// Send message. message can be a string or stream.
-Method SendMessageToQueue(queue As %String, message As %Stream.Object) As %Status
-{
-	Set sc = $$$OK
-	Set stream = ##class(%Library.GlobalBinaryStream).%New()
-	
-	If $isObject(message) {
-		While 'message.AtEnd {
-			Do stream.Write(..EncodeMessageBody(message.Read($$$MaxStringLength)))
-		}
-	} Else {
-		Do stream.Write(..EncodeMessageBody(message))
-	}
-	
-	Try {
-		Do ..API.sendMessageToQueue(queue, stream)
-	} Catch ex {
-		Set sc = ..ExceptionToStatus(ex)
-	}
-	Quit sc
 }
-
-Method EncodeMessageBody(body As %String) As %String
-{
-	If ..Encoding '= "" {
-		If $isObject(body) {
-			// TODO streams
-		} Else {
-			Set body = $zcvt(body, "O", ..Encoding)		
-		}
-	}
-	Quit body
-}
-
-}
-
