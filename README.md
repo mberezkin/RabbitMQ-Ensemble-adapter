@@ -40,7 +40,7 @@ ClassPath for all these elements must contain the paths to amqp jar and RabbitMQ
 
 ## Usage
 
-Check `isc.rabbitmq.Utils` for sample code. The main class is `isc.rabbitmq.API`, class message is `isc.rabbitmq.APIMessage`.
+Check [`isc.rabbitmq.Utils`](https://github.com/mberezkin/RabbitMQ-Ensemble-adapter/blob/master/isc/rabbitmq/Utils.cls) for sample code. The main class is `isc.rabbitmq.API`, class message is `isc.rabbitmq.APIMessage`.
 It has the following methods:
 * Connect
 * GetAPI
