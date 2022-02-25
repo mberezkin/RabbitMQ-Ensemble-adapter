@@ -5,13 +5,10 @@ Parameter ADAPTER = "isc.rabbitmq.OutboundAdapter";
 
 Property Adapter As isc.rabbitmq.OutboundAdapter;
 
-Method OnMessage(request As Ens.StringContainer, response As Ens.Response) As %Status
+Method OnMessage(message As isc.rabbitmq.Message, response As Ens.Response) As %Status
 {
-	#Dim sc As %Status = $$$OK
-	Set response = ##class(Ens.Response).%New()
-	Set sc = ..Adapter.SendMessage(request.StringValue)
+	Set sc = ..Adapter.SendMessage(message)
 	Quit sc
 }
 
 }
-
