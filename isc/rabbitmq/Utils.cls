@@ -2,19 +2,27 @@
 Class isc.rabbitmq.Utils
 {
 
-Parameter CLASS = "isc.rabbitmq.API";
+Parameter CLASS = "isc.rabbitmq.API,isc.rabbitmq.APIMessage";
 
-Parameter CLASSPATH = "C:\InterSystems\Java\RabbitMQjava.jar,C:\InterSystems\Java\amqp-client-5.7.2.jar";
+Parameter CLASSPATH = "C:\InterSystems\RabbitMQ\RabbitMQjava.jar;C:\InterSystems\RabbitMQ\amqp-client-5.7.2.jar";
 
-Parameter BUILDCLASSPATH = "D:\Cache\RabbitMQ\java\out\artifacts\RabbitMQjava_jar\RabbitMQjava.jar";
+Parameter BUILDCLASSPATH = "C:\InterSystems\RabbitMQ\Out\RabbitMQjava.jar";
 
-Parameter GATEWAY = "RabbitMQ";
+Parameter GATEWAY = "RabbitMQjava";
 
-Parameter QUEUE = "hello";
+Parameter GATEWAYCLIENT = "RabbitMQclient";
+
+Parameter QUEUE = "OutTest";
+
+Parameter EXCHANGE;
+
+Parameter JAVAHOME = "C:\Program Files\Java\jdk1.8.0_321";
+
+// $SYSTEM.Util.GetEnviron("JAVA_HOME")
 
 /// Create JGW. Java home must point to 1.8 jre.
 /// Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).CreateGateway())
-ClassMethod CreateGateway(gatewayName = {..#GATEWAY}, javaHome = {$SYSTEM.Util.GetEnviron("JAVA_HOME")}, path As %String = {..#CLASSPATH}, port As %Integer = 44444)
+ClassMethod CreateGateway(gatewayName = {..#GATEWAY}, javaHome = {..#JAVAHOME}, path As %String = {..#CLASSPATH}, port As %Integer = 55555)
 {
 	set sys = ##class(%Net.Remote.ObjectGateway).%New()
 	set sys.Name = gatewayName
@@ -33,150 +41,31 @@ ClassMethod UpdateJar(gatewayName = {..#GATEWAY}, path As %String = {..#CLASSPAT
 	//Set sc = ##class(Ens.Director).StopProduction(, 1)
 	Quit:$$$ISERR(sc) sc
 	
-	//Set sc = ##class(%Net.Remote.Service).StopGateway(gatewayName)
+	Set sc = ##class(%Net.Remote.Service).StartGateway(gatewayName)
 	Quit:$$$ISERR(sc) sc
 
 	Set gateway = ..Connect(gatewayName, path, .sc)
 	Quit:$$$ISERR(sc) sc
 
-	Set sc = gateway.%Import(..#CLASS)
-	Quit:$$$ISERR(sc) sc
-	Set:'##class(%Dictionary.CompiledClass).%ExistsId(..#CLASS) sc = $$$ERROR($$$GeneralError, $$$FormatText("Class '%1' does not exist",..#CLASS))
-	Quit:$$$ISERR(sc) sc
-	
+    s listClass = $lfs(..#CLASS), cls = ""
+    for i=1:1:$ll(listClass) {
+	s cls = $lg(listClass, i)
+	w "Import ["_cls_"]",!
+			
+	Set sc = gateway.%Import(cls)
+	return:$$$ISERR(sc) sc
+	Set:'##class(%Dictionary.CompiledClass).%ExistsId(cls) sc = $$$ERROR($$$GeneralError, $$$FormatText("Class '%1' does not exist",cls))
+	return:$$$ISERR(sc) sc
+    }
+    
 	Set sc = ##class(%Net.Remote.Service).StopGateway(gatewayName)
 	
 	//Set sc = ##class(Ens.Director).StartProduction()
 	Quit sc
 }
 
-/// Read one message.
-/// Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).ReadMsg())
-ClassMethod ReadMsg(pMsgLen = 32000) As %Status
-{
-    #Dim gateway as %Net.Remote.Gateway
-    #Dim exception as %Exception.AbstractException
-
-    Set sc = $$$OK
-    Try {
-	    
-        Set gateway = ..Connect()
-        #Dim api As isc.rabbitmq.API
-        Set api = ..GetAPI(gateway)
-
-		Set list = ##class(%ListOfDataTypes).%New()
-		For i=1:1:15 Do list.Insert("")
-		
-		#Dim stream As %Stream.Object
-        Set stream = api.readMessageStream(.list)
-        set body = stream.Read()
-        Write !,"Body: ", body,!
-        set ^a = body
-        Write !
-        
-        Zw list
-
-        Set sc= gateway.%Disconnect()
-    } Catch ex {
-        Set sc = $$$ADDSC(ex.AsStatus(), $g(%objlasterror))
-    }
-
-    Quit sc
-}
-
-/// Read one message.
-/// Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).ReadMsgString())
-ClassMethod ReadMsgString(pMsgLen = 32000) As %Status
-{
-    #Dim gateway as %Net.Remote.Gateway
-    #Dim exception as %Exception.AbstractException
-
-    Set sc = $$$OK
-    Try {
-	    
-        Set gateway = ..Connect()
-        #Dim api As isc.rabbitmq.API
-        Set api = ..GetAPI(gateway)
-
-		#Dim list As %ListOfDataTypes
-        Set list = api.readMessageString()
-        
-        set ^dbg = list.GetAt(16)
-        Write !,"Body: ",list.GetAt(16),!
-        
-        Zw list
-
-        Set sc= gateway.%Disconnect()
-    } Catch ex {
-	    break
-        Set sc = $$$ADDSC(ex.AsStatus(), $g(%objlasterror))
-    }
-
-    Quit sc
-}
-
-/// Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).ReadMsgBodyString())
-ClassMethod ReadMsgBodyString() As %Status
-{
-    #Dim gateway as %Net.Remote.Gateway
-    #Dim exception as %Exception.AbstractException
-
-    Set sc = $$$OK
-    Try {
-	    
-        Set gateway = ..Connect()
-        #Dim api As isc.rabbitmq.API
-        Set api = ..GetAPI(gateway)
-
-        Set message = api.readMessageBodyString()
-        
-        Write "Body: ",message,!
-        Write "UTF: ",$zcvt(message, "I", "UTF8"),!
-        Write "CP1251 UTF: ",$zcvt($zcvt(message, "O", "CP1251"), "I", "UTF8"),!
-        
-        Zw list
-
-        Set sc= gateway.%Disconnect()
-    } Catch ex {
-	    break
-        Set sc = $$$ADDSC(ex.AsStatus(), $g(%objlasterror))
-    }
-
-    Quit sc
-}
-
-/// Send one message.
-/// Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).SendMsg())
-ClassMethod SendMsg(msg = "356") As %Status
-{
-    #dim gateway as %Net.Remote.Gateway
-    #dim exception as %Exception.AbstractException
-
-    Set sc = $$$OK
-    Try {
-	    
-        Set gateway = ..Connect()
-        #Dim api As isc.rabbitmq.API
-        Set api = ..GetAPI(gateway)
-
-        Set stream = ##class(%GlobalBinaryStream).%New()
-        Do stream.Write(msg)
-		
-        Do api.sendMessage(stream)
-        
-
-        Set sc= gateway.%Disconnect()
-
-    } Catch ex {
-	    break
-        Set sc = $$$ADDSC(ex.AsStatus(), $g(%objlasterror))
-    }
-
-    Quit sc
-}
-
 /// Get JGW object
-ClassMethod Connect(gatewayName As %String = {..#GATEWAY}, path As %String = {..#CLASSPATH}, Output sc As %Status) As %Net.Remote.Gateway
+ClassMethod Connect(gatewayName As %String = {..#GATEWAYCLIENT}, path As %String = {..#CLASSPATH}, Output sc As %Status) As %Net.Remote.Gateway
 {
 	Set gateway = ""
 	Set sc = ##class(%Net.Remote.Service).OpenGateway(gatewayName, .gatewayConfig)
@@ -194,11 +83,107 @@ ClassMethod GetAPI(gateway As %Net.Remote.Gateway)
 	Set pass = "guest"
 	Set virtualHost = "/"
 	Set queue = ..#QUEUE
-	Set durable = $$$YES
+	Set exchange = ..#EXCHANGE
 	
-	Set api = ##class(isc.rabbitmq.API).%New(gateway,  host, port, user, pass, virtualHost, queue, durable)
+	if exchange]"" { 
+		Set api = ##class(isc.rabbitmq.API).%New(gateway,  host, port, user, pass, virtualHost, queue, exchange)
+	}
+	else { 
+		Set api = ##class(isc.rabbitmq.API).%New(gateway,  host, port, user, pass, virtualHost, queue)
+	}
+		
 	Quit api
 }
 
+/// Read one message.
+/// Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).ReadMsg())
+ClassMethod ReadMsg() As %Status
+{
+    #Dim gateway as %Net.Remote.Gateway
+
+    Set sc = $$$OK
+    Try {
+	// Connect
+        Set gateway = ..Connect()
+        #Dim api As isc.rabbitmq.API = ..GetAPI(gateway)
+        if api.isLastError() $$$ThrowStatus($$$ERROR($$$GeneralError, api.getLastErrorMessage()))
+        
+        // Read message
+        #dim apiMessage as APIMessage = api.readMessage()
+	if api.isLastError() $$$ThrowStatus($$$ERROR($$$GeneralError, api.getLastErrorMessage()))
+
+	// Print RabbitMQ message
+	w apiMessage.toString(),!
+		
+	// Convert isc.rabbitmq.APIMessage (java) into isc.rabbitmq.Message (Ensemble)
+	Set message = ##class(isc.rabbitmq.Message).%New()
+	$$$ThrowOnError(##class(isc.rabbitmq.Common).APIMessageToMessage(apiMessage, .message))
+		
+	w "message.MessageId: ",message.MessageId,!
+	w "message.BodyString: ",message.BodyString,!
+		
+	// Save isc.rabbitmq.Message
+	$$$ThrowOnError(message.%Save())
+		
+	// Disconnect
+	do api.close()
+        Set sc= gateway.%Disconnect()
+    } Catch ex {
+        Set sc = $$$ADDSC(ex.AsStatus(), $g(%objlasterror))
+    }
+
+    Quit sc
 }
 
+/// Send one message.
+/// Write $System.Status.GetErrorText(##class(isc.rabbitmq.Utils).SendMsg())
+ClassMethod SendMsg(msg = "356") As %Status
+{
+    #dim gateway as %Net.Remote.Gateway
+
+    Set sc = $$$OK
+    Try {
+	    // Connect
+        Set gateway = ..Connect()
+        #Dim api As isc.rabbitmq.API = ..GetAPI(gateway)
+        if api.isLastError() $$$ThrowStatus($$$ERROR($$$GeneralError, api.getLastErrorMessage()))
+
+	// Create isc.rabbitmq.Message
+	Set message = ##class(isc.rabbitmq.Message).%New()
+		
+	// Set BasicProperties
+	set message.MessageId = $zdt($h)
+	set message.ContentType = "text/xml"
+	set message.DeliveryMode = 1
+	set message.Timestamp = $zdt($h,3,1) // "YYYY-MM-DD hh:mm:ss"
+		
+	// Set Headers (array of %String)
+	do message.Headers.SetAt("MySystem", "system")
+	do message.Headers.SetAt("test.server", "node-request")
+	do message.Headers.SetAt("getClient", "service-name")
+		
+	// Set Body
+	set message.BodyString = "<body>Test message</body>"
+		
+	// Save isc.rabbitmq.Message
+	$$$ThrowOnError(message.%Save())
+				
+	// Convert isc.rabbitmq.Message (Ensemble) into isc.rabbitmq.APIMessage (java)
+	s apiMessage = ##class(isc.rabbitmq.APIMessage).%New(gateway)
+	$$$ThrowOnError(##class(isc.rabbitmq.Common).MessageToAPIMessage(message, .apiMessage))
+        
+        // Send message
+        do api.sendMessage(apiMessage)
+	if api.isLastError() $$$ThrowStatus($$$ERROR($$$GeneralError, api.getLastErrorMessage()))
+        
+        // Disconnect
+	do api.close()
+        Set sc = gateway.%Disconnect()
+    } Catch ex {
+        Set sc = $$$ADDSC(ex.AsStatus(), $g(%objlasterror))
+    }
+
+    Quit sc
+}
+
+}
