@@ -9,6 +9,14 @@ Property Host As %VarString [ InitialExpression = "localhost" ];
 
 Property Port As %Integer [ InitialExpression = -1 ];
 
+/// List nodes of claster (node1:port,node2,..,nodeN:port)
+/// if port not defined uses value of property Port
+Property ClusterHostList As %String(MAXLEN = 1000);
+
+Property ClusterHosts As list Of %String [ Private ];
+
+Property ClusterPorts As list Of %Integer [ Private ];
+
 Property VirtualHost As %String [ InitialExpression = "/" ];
 
 /// Outbound adapter only (ignored for inbound adapter)
@@ -50,13 +58,49 @@ Property Encoding As %String;
 Property ClassPath As %String(MAXLEN = 32000);
 
 /// These are the production settings for this object
-Parameter SETTINGS = "Host:Basic,Port:Basic,VirtualHost:Basic,Queue:Basic,Exchange:Basic,Credentials:Basic:credentialsSelector,JGHost:Java Gateway,JGPort:Java Gateway,JGService:Java Gateway:selector?context={Ens.ContextSearch/ProductionItems?targets=0&productionName=@productionId},ClassPath:Basic,Encoding:Basic";
+Parameter SETTINGS = "Host:Basic,Port:Basic,ClusterHostList:Basic,VirtualHost:Basic,Queue:Basic,Exchange:Basic,Credentials:Basic:credentialsSelector,JGHost:Java Gateway,JGPort:Java Gateway,JGService:Java Gateway:selector?context={Ens.ContextSearch/ProductionItems?targets=0&productionName=@productionId},ClassPath:Basic,Encoding:Basic";
+
+Method InitClasterHostList() As %Status [ Private ]
+{
+  d ..ClusterHosts.Clear()
+  d ..ClusterPorts.Clear()
+  
+  if ..ClusterHostList="" {
+    d ..ClusterHosts.Insert(..Host)
+    d ..ClusterPorts.Insert(..Port)
+    
+    q $$$OK
+  }
+  
+  s lstNodes = $lfs(..ClusterHostList)
+  s (host,port)=""
+  
+  f i=1:1:$ll(lstNodes) {
+    s host = $lg(lstNodes,i)
+    i $l(host,":")>1 s host=$p(host,":"),port=$p(host,":",2)
+    e  s port=..Port
+   
+    d ..ClusterHosts.Insert(host)
+    d ..ClusterPorts.Insert(port)
+  }
+  
+  q $$$OK
+}
 
 /// Connect to running JGW 
 Method Connect() As %Status
 {
     Quit:((..JGService="") && ((..JGHost="") || (..JGPort = ""))) $$$ERROR($$$GeneralError,"Specify JGService setting or JGHost and JGPort settings")
     Quit:((..JGService'="") && '##class(Ens.Director).IsItemEnabled(..JGService)) $$$ERROR($$$GeneralError, $$$FormatText("Java Gateway Service: '%1' is down",..JGService))
+    
+    // Disconnect JGW
+    If $IsObject(..JGW) {
+      Try {
+        Do ..JGW.%Disconnect()
+      } Catch ex {}
+      
+      Set ..JGW = $$$NULLOREF
+    }
       
     // connect to current namespace, use 2 second timeout
     Set sc = $$$OK
@@ -74,11 +118,17 @@ Method Connect() As %Status
       Set port = ..JGPort
     }
     
+    $$$LOGINFO($$$FormatText("Connect to JavaGateway: %1:%2", host, port))
     Set sc = gateway.%Connect(host, port, $namespace, timeout, classPath)
 
     If $$$ISOK(sc) {
       Set ..JGW = gateway
+      $$$LOGINFO("Connect to JavaGateway: OK")
     }
+    else {
+      $$$LOGWARNING($system.Status.GetErrorText(sc))
+    }
+    
     Quit sc
 }
 
@@ -94,31 +144,44 @@ Method ConnectToRabbitMQ() As %Status
     Set pass = "guest"
   }
   
-  Try {
-    If $IsObject(..API) {
-      Try {
-        Do ..API.close()
-      } Catch ex {}
+  for i=1:1:..ClusterHosts.Count() { 
+    s ..Host=..ClusterHosts.GetAt(i)
+    s ..Port=..ClusterPorts.GetAt(i)
+    
+    Try {
+      If $IsObject(..API) {
+        Try {
+          Do ..API.close()
+        } Catch ex {}
       
-      Set ..API = $$$NULLOREF
+        Set ..API = $$$NULLOREF
+      }
+      
+      // Connect to running JGW
+      Set sc = ..Connect()  continue:$$$ISERR(sc)
+    
+      $$$LOGINFO($$$FormatText("Connect to RabbitMQ: %1:%2, VirtualHost: %3, Queue: %4, Exchange: %5...", ..Host, ..Port, ..VirtualHost, ..Queue, ..Exchange))
+        
+      if ..Exchange]"" { Set ..API = ##class(isc.rabbitmq.API).%New(..JGW, ..Host, ..Port, user, pass, ..VirtualHost, ..Queue, ..Exchange) }
+      else { Set ..API = ##class(isc.rabbitmq.API).%New(..JGW, ..Host, ..Port, user, pass, ..VirtualHost, ..Queue) }
+    
+      s:'$IsObject(..API) sc = $$$ERROR($$$GeneralError,"API.ConnectToRabbitMQ")
+      s:($IsObject(..API)&&..API.isLastError()) sc = $$$ERROR($$$GeneralError, ..API.getLastErrorMessage())
+
+    } Catch ex {
+      Set sc = ..ExceptionToStatus(ex)
     }
     
-    if ..Exchange]"" { Set ..API = ##class(isc.rabbitmq.API).%New(..JGW, ..Host, ..Port, user, pass, ..VirtualHost, ..Queue, ..Exchange) }
-    else { Set ..API = ##class(isc.rabbitmq.API).%New(..JGW, ..Host, ..Port, user, pass, ..VirtualHost, ..Queue) }
-    
-    
-    s:'$IsObject(..API) sc = $$$ERROR($$$GeneralError,"API.ConnectToRabbitMQ")
-    s:($IsObject(..API)&&..API.isLastError()) sc = $$$ERROR($$$GeneralError, ..API.getLastErrorMessage())
-
-  } Catch ex {
-    Set sc = ..ExceptionToStatus(ex)
-  }
+    i $$$ISOK(sc) $$$LOGINFO("Connect to RabbitMQ: OK")
+    e  $$$LOGWARNING($system.Status.GetErrorText(sc))
+        
+    q:$$$ISOK(sc)
+  } // for
   
   Quit sc
 }
 
-// Check connect and reconnect, if connection lost 
-
+/// Check connect and reconnect, if connection lost 
 Method CheckConnectToRabbitMQ() As %Status
 {
   Set sc = $$$OK
@@ -133,12 +196,8 @@ Method CheckConnectToRabbitMQ() As %Status
       Set sc = ..ExceptionToStatus(ex)
     }
     q:$$$ISOK(sc)
-        
-    $$$LOGWARNING("Reconnect to JavaGateway...")
-    Set sc = ..Connect()  q:$$$ISERR(sc)
-    $$$LOGINFO("Connection to JavaGateway restored")
       
-    $$$LOGWARNING($$$FormatText("Reconnect to RabbitMQ: %1:%2, VirtualHost: %3, Queue: %4, Exchange: %5...", ..Host, ..Port, ..VirtualHost, ..Queue, ..Exchange))
+    $$$LOGWARNING("Reconnect to RabbitMQ...")
     Set sc = ..ConnectToRabbitMQ()  q:$$$ISERR(sc)
     $$$LOGINFO("Connection to RabbitMQ restored")
   } Catch ex {
