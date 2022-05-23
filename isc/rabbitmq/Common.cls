@@ -3,6 +3,9 @@ Include Ensemble
 Class isc.rabbitmq.Common Extends %RegisteredObject [ Abstract ]
 {
 
+/// Status last try  
+Property lastStatus As %Status [ InitialExpression = {$$$OK}, Private ];
+
 /// Either host or Connection URI: amqp:\\
 /// If Connection URI is passed, then Port, Credentials and Virtual host properties are ignored.
 Property Host As %VarString [ InitialExpression = "localhost" ];
