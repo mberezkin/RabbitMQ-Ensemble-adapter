@@ -24,7 +24,7 @@ Method OnInit() As %Status
   s ..origCallInterval = ..CallInterval
   d ..InitClasterHostList()
   
-  Set sc = ..ConnectToRabbitMQ()
+  Set ..lastStatus = ..ConnectToRabbitMQ()
   Quit $$$OK
 }
 
@@ -53,12 +53,8 @@ Method OnTask() As %Status
 {
   Set sc = $$$OK
   
-  // Check connection
-  s sc = ..CheckConnectToRabbitMQ()
-  
-  // If Error set ReconnectInterval else return original CallInterval
-  i $$$ISERR(sc) s ..CallInterval = ..ReconnectInterval 
-  e  s ..CallInterval = ..origCallInterval
+  // if last try was fail then forced connect else check
+  s sc=$s($$$ISERR(..lastStatus):..ConnectToRabbitMQ(),1:..CheckConnectToRabbitMQ())
   
   Set messageCount = 1
   
@@ -96,8 +92,19 @@ Method OnTask() As %Status
     Quit:$$$ISERR(sc)
   }
     
+  // If Error set ReconnectInterval else return original CallInterval
+  if $$$ISERR(sc) {
+    $$$LOGERROR($system.Status.GetErrorText(sc))
+    s ..CallInterval = ..ReconnectInterval 
+  }
+  else {
+    s ..CallInterval = ..origCallInterval 
+  }
+  
+  s ..lastStatus = sc
+  
   Set ..BusinessHost.%WaitForNextCallInterval=1
-  Quit sc
+  Quit $$$OK
 }
 
 }
