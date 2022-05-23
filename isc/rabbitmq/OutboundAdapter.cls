@@ -6,7 +6,7 @@ Method OnInit() As %Status
 {
   d ..InitClasterHostList()
   
-  Set sc = ..ConnectToRabbitMQ()
+  Set ..lastStatus = ..ConnectToRabbitMQ()
   Quit $$$OK
 }
 
@@ -38,8 +38,8 @@ Method SendMessage(message As isc.rabbitmq.Message) As %Status
   q:'$IsObject(message) $$$ERROR($$$GeneralError,"Not object [isc.rabbitmq.Message]")
         
   Try {
-    // Check connection
-    s sc = ..CheckConnectToRabbitMQ()
+    // if last try was fail then forced connect else check
+    s sc=$s($$$ISERR(..lastStatus):..ConnectToRabbitMQ(),1:..CheckConnectToRabbitMQ())
     q:$$$ISERR(sc)
     
     s apiMessage = ##class(isc.rabbitmq.APIMessage).%New(..JGW)
@@ -56,6 +56,7 @@ Method SendMessage(message As isc.rabbitmq.Message) As %Status
     Set sc = ..ExceptionToStatus(ex)
   }
   
+  s ..lastStatus = sc
   Quit sc
 }
 
